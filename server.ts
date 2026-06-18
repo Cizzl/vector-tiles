@@ -22,12 +22,18 @@ const S3_KEY = requireEnv("S3_KEY");
 const S3_ACCESS_KEY_ID = requireEnv("S3_ACCESS_KEY_ID");
 const S3_SECRET_ACCESS_KEY = requireEnv("S3_SECRET_ACCESS_KEY");
 
-const ALLOWED_ORIGINS = new Set(
-  (process.env.ALLOWED_ORIGINS ?? "")
-    .split(",")
-    .map((origin) => origin.trim())
-    .filter(Boolean),
-);
+const ALLOWED_ORIGIN_PATTERNS = (process.env.ALLOWED_ORIGINS ?? "")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean)
+  .map((pattern) => {
+    const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`^${escaped.replace(/\*/g, "[^/]+")}$`);
+  });
+
+function isOriginAllowed(origin: string): boolean {
+  return ALLOWED_ORIGIN_PATTERNS.some((pattern) => pattern.test(origin));
+}
 
 const s3Client = new S3Client({
   endpoint: S3_ENDPOINT,
@@ -60,7 +66,7 @@ function corsHeaders(origin: string | null): Record<string, string> {
     "Access-Control-Allow-Methods": "GET, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
   };
-  if (origin && ALLOWED_ORIGINS.has(origin)) {
+  if (origin && isOriginAllowed(origin)) {
     headers["Access-Control-Allow-Origin"] = origin;
   }
   return headers;
