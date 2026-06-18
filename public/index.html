@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Vector Tile Map</title>
+
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" />
+  <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; background: #1a1a1a; }
+    #map { width: 100vw; height: 100vh; }
+
+    #layer-switcher {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      background: white;
+      border-radius: 8px;
+      padding: 12px 16px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.3);
+      z-index: 1000;
+      min-width: 150px;
+    }
+    #layer-switcher h4 {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #888;
+      margin-bottom: 10px;
+    }
+    .layer-option {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 5px 0;
+      cursor: pointer;
+      font-size: 14px;
+      color: #222;
+    }
+    .layer-option input { cursor: pointer; accent-color: #2563eb; }
+
+    #status {
+      position: absolute;
+      bottom: 30px;
+      left: 10px;
+      background: rgba(255,255,255,0.88);
+      border-radius: 4px;
+      padding: 4px 10px;
+      font-size: 12px;
+      color: #444;
+      pointer-events: none;
+    }
+
+    #no-layers {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: white;
+      border-radius: 10px;
+      padding: 28px 36px;
+      text-align: center;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.35);
+      max-width: 420px;
+    }
+    #no-layers h2 { font-size: 18px; margin-bottom: 10px; color: #111; }
+    #no-layers p { font-size: 14px; color: #555; line-height: 1.6; }
+    #no-layers code {
+      display: inline-block;
+      background: #f3f4f6;
+      border-radius: 4px;
+      padding: 2px 6px;
+      font-size: 13px;
+      color: #1d4ed8;
+    }
+  </style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<div id="layer-switcher">
+  <h4>Layers</h4>
+  <div id="layer-list">Loading...</div>
+</div>
+
+<div id="status">Zoom: — | —, —</div>
+
+<script>
+const SERVER = "";  // same origin — served by Bun
+const DEFAULT_CENTER = [13.405, 52.52];  // Berlin; adjusted to data bounds on load
+const DEFAULT_ZOOM = 4;
+
+// ── Minimal OpenMapTiles-schema vector style ──────────────────────────────
+// Source-layer names match MapTiler / OpenMapTiles downloads.
+// Labels are omitted (require a separate glyphs font server).
+function buildVectorStyle(name, meta) {
+  const minzoom = parseInt(meta.minzoom ?? "0", 10);
+  const maxzoom = parseInt(meta.maxzoom ?? "14", 10);
+  return {
+    version: 8,
+    sources: {
+      [name]: {
+        type: "vector",
+        tiles: [`${SERVER}/tiles/${name}/{z}/{x}/{y}.pbf`],
+        minzoom,
+        maxzoom,
+      },
+    },
+    layers: [
+      { id: "background", type: "background", paint: { "background-color": "#f8f4f0" } },
+      {
+        id: "water-fill",
+        type: "fill",
+        source: name,
+        "source-layer": "water",
+        paint: { "fill-color": "#a0c8e8" },
+      },
+      {
+        id: "waterway",
+        type: "line",
+        source: name,
+        "source-layer": "waterway",
+        paint: { "line-color": "#a0c8e8", "line-width": 1 },
+      },
+      {
+        id: "landuse-grass",
+        type: "fill",
+        source: name,
+        "source-layer": "landuse",
+        filter: ["in", "class", "grass", "park", "forest", "meadow"],
+        paint: { "fill-color": "#cde8b0", "fill-opacity": 0.7 },
+      },
+      {
+        id: "landuse-residential",
+        type: "fill",
+        source: name,
+        "source-layer": "landuse",
+        filter: ["==", "class", "residential"],
+        paint: { "fill-color": "#ede8e0", "fill-opacity": 0.6 },
+      },
+      {
+        id: "road-minor",
+        type: "line",
+        source: name,
+        "source-layer": "transportation",
+        filter: ["in", "class", "minor", "service", "track"],
+        paint: { "line-color": "#fff", "line-width": 1 },
+        minzoom: 13,
+      },
+      {
+        id: "road-secondary",
+        type: "line",
+        source: name,
+        "source-layer": "transportation",
+        filter: ["in", "class", "secondary", "tertiary"],
+        paint: { "line-color": "#f5e8c0", "line-width": ["interpolate", ["linear"], ["zoom"], 8, 1, 14, 4] },
+      },
+      {
+        id: "road-primary",
+        type: "line",
+        source: name,
+        "source-layer": "transportation",
+        filter: ["in", "class", "primary", "trunk", "motorway"],
+        paint: { "line-color": "#f8c060", "line-width": ["interpolate", ["linear"], ["zoom"], 6, 1, 14, 6] },
+      },
+      {
+        id: "building-fill",
+        type: "fill",
+        source: name,
+        "source-layer": "building",
+        paint: { "fill-color": "#d9d0c7", "fill-opacity": 0.85 },
+        minzoom: 14,
+      },
+      {
+        id: "building-outline",
+        type: "line",
+        source: name,
+        "source-layer": "building",
+        paint: { "line-color": "#c0b8b0", "line-width": 0.5 },
+        minzoom: 14,
+      },
+      {
+        id: "boundary",
+        type: "line",
+        source: name,
+        "source-layer": "boundary",
+        filter: ["==", "admin_level", 2],
+        paint: { "line-color": "#aaa", "line-width": 1, "line-dasharray": [4, 2] },
+      },
+    ],
+  };
+}
+
+function buildRasterStyle(name, meta) {
+  return {
+    version: 8,
+    sources: {
+      [name]: {
+        type: "raster",
+        tiles: [`${SERVER}/tiles/${name}/{z}/{x}/{y}.${meta.format ?? "png"}`],
+        tileSize: 256,
+        minzoom: parseInt(meta.minzoom ?? "0", 10),
+        maxzoom: parseInt(meta.maxzoom ?? "18", 10),
+      },
+    },
+    layers: [
+      { id: "background", type: "background", paint: { "background-color": "#e8e0d8" } },
+      { id: name, type: "raster", source: name },
+    ],
+  };
+}
+
+// ── Map init ──────────────────────────────────────────────────────────────
+const map = new maplibregl.Map({
+  container: "map",
+  style: {
+    version: 8,
+    sources: {},
+    layers: [{ id: "background", type: "background", paint: { "background-color": "#e8e4df" } }],
+  },
+  center: DEFAULT_CENTER,
+  zoom: DEFAULT_ZOOM,
+});
+
+map.addControl(new maplibregl.NavigationControl(), "top-left");
+map.addControl(new maplibregl.ScaleControl({ unit: "metric" }), "bottom-right");
+map.addControl(new maplibregl.FullscreenControl(), "top-left");
+
+// ── Status bar ────────────────────────────────────────────────────────────
+const statusEl = document.getElementById("status");
+map.on("move", () => {
+  const c = map.getCenter();
+  const z = map.getZoom().toFixed(1);
+  statusEl.textContent = `Zoom: ${z} | ${c.lat.toFixed(5)}, ${c.lng.toFixed(5)}`;
+});
+
+// ── Layer switcher ────────────────────────────────────────────────────────
+const layerListEl = document.getElementById("layer-list");
+
+function switchLayer(name, meta) {
+  const format = meta.format ?? "pbf";
+  const style = format === "pbf"
+    ? buildVectorStyle(name, meta)
+    : buildRasterStyle(name, meta);
+  map.setStyle(style);
+}
+
+async function init() {
+  let layersData;
+  try {
+    const res = await fetch(`${SERVER}/layers`);
+    layersData = await res.json();
+  } catch (e) {
+    layerListEl.textContent = "Failed to load layers.";
+    console.error(e);
+    return;
+  }
+
+  const names = Object.keys(layersData);
+
+  if (names.length === 0) {
+    layerListEl.textContent = "No layers found.";
+    document.getElementById("map").insertAdjacentHTML("beforeend", `
+      <div id="no-layers">
+        <h2>No .mbtiles files found</h2>
+        <p>Add one or more <code>.mbtiles</code> files to the <code>tiles/</code> directory
+        and restart the server.<br><br>
+        Download free tiles from <code>data.maptiler.com/downloads</code>.</p>
+      </div>
+    `);
+    return;
+  }
+
+  layerListEl.innerHTML = "";
+  for (const name of names) {
+    const meta = layersData[name];
+    const label = document.createElement("label");
+    label.className = "layer-option";
+    const radio = document.createElement("input");
+    radio.type = "radio";
+    radio.name = "active-layer";
+    radio.value = name;
+    radio.addEventListener("change", () => switchLayer(name, meta));
+    label.appendChild(radio);
+    label.appendChild(document.createTextNode(name));
+    layerListEl.appendChild(label);
+  }
+
+  // Activate first layer
+  const firstName = names[0];
+  layerListEl.querySelector("input").checked = true;
+  switchLayer(firstName, layersData[firstName]);
+
+  // Fit to bounds from metadata
+  const bounds = layersData[firstName].bounds;
+  if (bounds) {
+    const [west, south, east, north] = bounds.split(",").map(Number);
+    // Only fit if it's not the full world default
+    if (!(west === -180 && south === -85 && east === 180 && north === 85)) {
+      map.fitBounds([[west, south], [east, north]], { padding: 40, duration: 800 });
+    }
+  }
+}
+
+init();
+</script>
+</body>
+</html>

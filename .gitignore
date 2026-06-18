@@ -1,0 +1,4 @@
+/node_modules
+*.pmtiles
+*.mbtiles
+tiles/pmtiles.exe
