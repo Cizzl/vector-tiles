@@ -2,3 +2,4 @@
 *.pmtiles
 *.mbtiles
 tiles/pmtiles.exe
+.env

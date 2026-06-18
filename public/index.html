@@ -267,10 +267,9 @@ async function init() {
     layerListEl.textContent = "No layers found.";
     document.getElementById("map").insertAdjacentHTML("beforeend", `
       <div id="no-layers">
-        <h2>No .mbtiles files found</h2>
-        <p>Add one or more <code>.mbtiles</code> files to the <code>tiles/</code> directory
-        and restart the server.<br><br>
-        Download free tiles from <code>data.maptiler.com/downloads</code>.</p>
+        <h2>No layer found</h2>
+        <p>Check that the configured <code>.pmtiles</code> file exists in the S3 bucket
+        and that the server's S3 environment variables are correct.</p>
       </div>
     `);
     return;
